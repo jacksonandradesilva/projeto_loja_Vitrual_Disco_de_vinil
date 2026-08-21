@@ -98,10 +98,17 @@ button {
   display: grid;
   place-items: center;
   border-radius: 10px;
-  background: linear-gradient(135deg, #f8c04a, #d97706);
-  color: #111827;
-  font-weight: 900;
-  letter-spacing: -0.04em;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #f0e5dc;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+}
+
+.logo-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .brand-name {

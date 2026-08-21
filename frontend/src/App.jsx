@@ -17,6 +17,7 @@ const defaultForm = {
   description: '',
   image: '',
   accent: '#f97316',
+  featured: false,
   tracksText: 'Dawn Lights|3:42|https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3\nAfterglow|4:05|https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3'
 };
 
@@ -140,8 +141,9 @@ function App() {
     audio.load();
   }, [selectedAlbum, activeTrack]);
 
-  const featuredProducts = filteredItems.slice(0, 4);
-  const promoProducts = filteredItems.slice(0, 3);
+  const highlightedItems = filteredItems.filter((album) => album.featured);
+  const featuredProducts = highlightedItems.length > 0 ? highlightedItems.slice(0, 4) : filteredItems.slice(0, 4);
+  const promoProducts = highlightedItems.length > 0 ? highlightedItems.slice(0, 3) : filteredItems.slice(0, 3);
 
   const addToCart = (album) => {
     setCart((current) => {
@@ -219,8 +221,11 @@ function App() {
   };
 
   const handleFormChange = (event) => {
-    const { name, value } = event.target;
-    setForm((current) => ({ ...current, [name]: value }));
+    const { name, value, checked, type } = event.target;
+    setForm((current) => ({
+      ...current,
+      [name]: type === 'checkbox' ? checked : value
+    }));
   };
 
   const parseTracks = (text) => {
@@ -254,6 +259,7 @@ function App() {
       description: product.description || '',
       image: product.image || '',
       accent: product.accent || '#f97316',
+      featured: Boolean(product.featured),
       tracksText: formatTracksText(product.tracks || [])
     });
     setView('admin');
@@ -312,6 +318,33 @@ function App() {
     }
   };
 
+  const handleToggleFeatured = async (product) => {
+    const nextFeatured = !Boolean(product.featured);
+
+    try {
+      const response = await fetch(`/api/products/${product.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...product,
+          featured: nextFeatured
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Erro ao atualizar destaque.');
+
+      const nextCatalog = items.map((item) =>
+        item.id === product.id ? { ...item, featured: nextFeatured } : item
+      );
+
+      persistCatalog(nextCatalog);
+      setMessage(data.message || (nextFeatured ? 'Produto adicionado aos destaques.' : 'Produto removido dos destaques.'));
+    } catch (error) {
+      setMessage(error.message || 'Erro ao atualizar destaque.');
+    }
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
 
@@ -337,6 +370,7 @@ function App() {
         image: form.image,
         accent: form.accent,
         published: editingId ? Boolean(existingProduct?.published) : false,
+        featured: Boolean(form.featured),
         tracks
       };
 
@@ -387,7 +421,9 @@ function App() {
 
         <div className="main-header">
           <div className="brand-box">
-            <div className="logo-mark">R</div>
+            <div className="logo-mark">
+              <img src={sloganImage} alt="The Roots logo" />
+            </div>
             <div>
               <span className="brand-name">The Roots</span>
               <small>vinil & cultura</small>
@@ -704,6 +740,11 @@ function App() {
                   <input type="color" name="accent" value={form.accent} onChange={handleFormChange} />
                 </label>
 
+                <label>
+                  Destaque da loja
+                  <input type="checkbox" name="featured" checked={Boolean(form.featured)} onChange={handleFormChange} />
+                </label>
+
                 <label className="full-width">
                   URL da imagem
                   <input name="image" value={form.image} onChange={handleFormChange} placeholder="https://..." />
@@ -765,6 +806,9 @@ function App() {
                   <div className="admin-product-actions">
                     <button type="button" className="mini-button" onClick={() => handleTogglePublish(item)}>
                       {item.published === false ? 'Publicar' : 'Ocultar'}
+                    </button>
+                    <button type="button" className="mini-button" onClick={() => handleToggleFeatured(item)}>
+                      {item.featured ? 'Remover destaque' : 'Destacar'}
                     </button>
                     <button type="button" className="mini-button" onClick={() => handleEditProduct(item)}>Editar</button>
                     <button type="button" className="mini-button danger" onClick={() => handleDeleteProduct(item.id)}>Excluir</button>
