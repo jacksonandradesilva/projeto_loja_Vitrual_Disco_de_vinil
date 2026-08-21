@@ -33,7 +33,8 @@ const normalizeProductPayload = (payload) => {
     image,
     accent,
     tracks,
-    published
+    published,
+    featured
   } = payload || {};
 
   const parsedTracks = Array.isArray(tracks) && tracks.length > 0
@@ -52,6 +53,7 @@ const normalizeProductPayload = (payload) => {
     image: String(image || '').trim(),
     accent: String(accent || '#f97316'),
     published: payload && Object.prototype.hasOwnProperty.call(payload, 'published') ? Boolean(published) : false,
+    featured: payload && Object.prototype.hasOwnProperty.call(payload, 'featured') ? Boolean(featured) : false,
     tracks: parsedTracks
   };
 };
@@ -78,6 +80,7 @@ const productSchema = new mongoose.Schema({
   image: { type: String, default: '' },
   accent: { type: String, default: '#f97316' },
   published: { type: Boolean, default: false },
+  featured: { type: Boolean, default: false },
   tracks: { type: [trackSchema], default: [] }
 }, { versionKey: false });
 
@@ -98,6 +101,7 @@ let catalog = [
       'https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=900&q=80',
     accent: '#6d5efc',
     published: true,
+    featured: true,
     tracks: [
       { title: 'Dawn Lights', duration: '3:42', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3' },
       { title: 'Afterglow', duration: '4:05', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3' },
@@ -118,6 +122,7 @@ let catalog = [
       'https://images.unsplash.com/photo-1507838153414-b4b713384a76?auto=format&fit=crop&w=900&q=80',
     accent: '#f97316',
     published: true,
+    featured: true,
     tracks: [
       { title: 'Neon Avenue', duration: '4:18', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3' },
       { title: 'Paper Stars', duration: '3:49', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3' },
@@ -138,6 +143,7 @@ let catalog = [
       'https://images.unsplash.com/photo-1525201548942-d8732f6617a0?auto=format&fit=crop&w=900&q=80',
     accent: '#ec4899',
     published: true,
+    featured: false,
     tracks: [
       { title: 'Night Ferry', duration: '3:33', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3' },
       { title: 'Warm Lights', duration: '4:07', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3' },
@@ -158,6 +164,7 @@ let catalog = [
       'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=900&q=80',
     accent: '#14b8a6',
     published: true,
+    featured: false,
     tracks: [
       { title: 'Late Trains', duration: '4:01', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3' },
       { title: 'Blue Notes', duration: '5:11', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-11.mp3' },
@@ -178,6 +185,7 @@ let catalog = [
       'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=900&q=80',
     accent: '#f59e0b',
     published: true,
+    featured: false,
     tracks: [
       { title: 'Harbor Glow', duration: '4:24', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-13.mp3' },
       { title: 'Last Frame', duration: '3:44', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-14.mp3' },
@@ -198,6 +206,7 @@ let catalog = [
       'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=900&q=80',
     accent: '#22c55e',
     published: true,
+    featured: false,
     tracks: [
       { title: 'Night Pulse', duration: '4:08', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-16.mp3' },
       { title: 'Signal Bloom', duration: '3:56', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-17.mp3' },
@@ -241,7 +250,8 @@ app.post('/api/products', async (req, res) => {
   const newProduct = {
     id: Date.now() + Math.floor(Math.random() * 1000),
     ...productData,
-    published: Object.prototype.hasOwnProperty.call(req.body || {}, 'published') ? Boolean(req.body.published) : false
+    published: Object.prototype.hasOwnProperty.call(req.body || {}, 'published') ? Boolean(req.body.published) : false,
+    featured: Object.prototype.hasOwnProperty.call(req.body || {}, 'featured') ? Boolean(req.body.featured) : false
   };
 
   if (mongoose.connection.readyState === 1) {
@@ -278,7 +288,7 @@ app.put('/api/products/:id', async (req, res) => {
   if (mongoose.connection.readyState === 1) {
     const updatedProduct = await Product.findOneAndUpdate(
       { id: productId },
-      { ...productData, id: productId, published: Object.prototype.hasOwnProperty.call(req.body || {}, 'published') ? Boolean(req.body.published) : productData.published },
+      { ...productData, id: productId, published: Object.prototype.hasOwnProperty.call(req.body || {}, 'published') ? Boolean(req.body.published) : productData.published, featured: Object.prototype.hasOwnProperty.call(req.body || {}, 'featured') ? Boolean(req.body.featured) : productData.featured },
       { new: true, runValidators: true }
     );
 
@@ -304,7 +314,8 @@ app.put('/api/products/:id', async (req, res) => {
     ...catalog[productIndex],
     ...productData,
     id: productId,
-    published: Object.prototype.hasOwnProperty.call(req.body || {}, 'published') ? Boolean(req.body.published) : catalog[productIndex].published
+    published: Object.prototype.hasOwnProperty.call(req.body || {}, 'published') ? Boolean(req.body.published) : catalog[productIndex].published,
+    featured: Object.prototype.hasOwnProperty.call(req.body || {}, 'featured') ? Boolean(req.body.featured) : catalog[productIndex].featured
   };
 
   catalog = catalog.map((item) => item.id === productId ? updatedProduct : item);
