@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 const API_URL = '/api/catalog';
 const CATALOG_KEY = 'the-roots-catalog';
 const CART_KEY = 'the-roots-cart';
+const FALLBACK_TRACK_URL = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
 const filters = ['Todos', 'Eletrônica', 'Rock', 'Pop', 'Jazz', 'Indie', 'Synthwave'];
 
 const defaultForm = {
@@ -37,6 +38,7 @@ function App() {
     }
   });
   const [selectedId, setSelectedId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [search, setSearch] = useState('');
@@ -96,12 +98,13 @@ function App() {
 
   const filteredItems = useMemo(() => {
     return items.filter((album) => {
+      const isPublished = album.published !== false;
       const matchesFilter = selectedFilter === 'Todos' || album.genre === selectedFilter;
       const matchesSearch =
         album.title.toLowerCase().includes(search.toLowerCase()) ||
         album.artist.toLowerCase().includes(search.toLowerCase());
 
-      return matchesFilter && matchesSearch;
+      return isPublished && matchesFilter && matchesSearch;
     });
   }, [items, search, selectedFilter]);
 
@@ -188,11 +191,31 @@ function App() {
     }
   };
 
-  const handleTrackPlay = (track) => {
-    setActiveTrack(track);
-    if (!audioRef.current) return;
-    audioRef.current.src = track.url;
-    audioRef.current.play();
+  const normalizeTrackUrl = (url) => {
+    if (typeof url !== 'string') return FALLBACK_TRACK_URL;
+    const trimmed = url.trim();
+    return /^https?:\/\//i.test(trimmed) ? trimmed : FALLBACK_TRACK_URL;
+  };
+
+  const handleTrackPlay = async (track) => {
+    if (!track || !audioRef.current) return;
+
+    const safeUrl = normalizeTrackUrl(track.url);
+    setActiveTrack({ ...track, url: safeUrl });
+    audioRef.current.src = safeUrl;
+    audioRef.current.load();
+
+    try {
+      await audioRef.current.play();
+    } catch (error) {
+      setMessage('Não foi possível reproduzir essa faixa. Tente outra música ou verifique a URL do áudio.');
+    }
+  };
+
+  const openProductDetail = (product) => {
+    if (!product) return;
+    setSelectedId(product.id);
+    setView('product');
   };
 
   const handleFormChange = (event) => {
@@ -207,9 +230,86 @@ function App() {
       .filter(Boolean)
       .map((entry) => {
         const [title, duration, url] = entry.split('|').map((item) => item.trim());
-        return { title, duration: duration || '3:30', url };
+        return { title, duration: duration || '3:30', url: normalizeTrackUrl(url) };
       })
       .filter((track) => track.title && track.url);
+  };
+
+  const formatTracksText = (tracks = []) => {
+    return tracks
+      .map((track) => `${track.title}|${track.duration || '3:30'}|${track.url || ''}`)
+      .join('\n');
+  };
+
+  const handleEditProduct = (product) => {
+    setEditingId(product.id);
+    setForm({
+      title: product.title,
+      artist: product.artist,
+      genre: product.genre,
+      year: product.year || new Date().getFullYear(),
+      price: String(product.price),
+      oldPrice: String(product.oldPrice || product.price),
+      stock: product.stock || 1,
+      description: product.description || '',
+      image: product.image || '',
+      accent: product.accent || '#f97316',
+      tracksText: formatTracksText(product.tracks || [])
+    });
+    setView('admin');
+    setMessage(`Editando ${product.title}.`);
+  };
+
+  const handleDeleteProduct = async (productId) => {
+    if (!window.confirm('Deseja remover este produto?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/products/${productId}`, { method: 'DELETE' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Erro ao remover produto.');
+
+      const nextCatalog = items.filter((item) => item.id !== productId);
+      persistCatalog(nextCatalog);
+      if (selectedId === productId) {
+        setSelectedId(nextCatalog[0]?.id || null);
+      }
+      if (editingId === productId) {
+        setEditingId(null);
+        setForm(defaultForm);
+      }
+      setMessage(data.message || 'Produto removido com sucesso!');
+    } catch (error) {
+      setMessage(error.message || 'Erro ao remover produto.');
+    }
+  };
+
+  const handleTogglePublish = async (product) => {
+    const nextPublished = !Boolean(product.published);
+
+    try {
+      const response = await fetch(`/api/products/${product.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...product,
+          published: nextPublished
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Erro ao atualizar publicação.');
+
+      const nextCatalog = items.map((item) =>
+        item.id === product.id ? { ...item, published: nextPublished } : item
+      );
+
+      persistCatalog(nextCatalog);
+      setMessage(data.message || (nextPublished ? 'Produto publicado na loja.' : 'Produto ocultado da loja.'));
+    } catch (error) {
+      setMessage(error.message || 'Erro ao atualizar publicação.');
+    }
   };
 
   const handleSubmit = async (event) => {
@@ -224,37 +324,45 @@ function App() {
 
     try {
       setSubmitting(true);
-      const response = await fetch('/api/products', {
-        method: 'POST',
+      const existingProduct = editingId ? items.find((item) => item.id === editingId) : null;
+      const requestBody = {
+        title: form.title,
+        artist: form.artist,
+        genre: form.genre,
+        year: Number(form.year || new Date().getFullYear()),
+        price: Number(form.price),
+        oldPrice: Number(form.oldPrice || form.price),
+        stock: Number(form.stock || 1),
+        description: form.description,
+        image: form.image,
+        accent: form.accent,
+        published: editingId ? Boolean(existingProduct?.published) : false,
+        tracks
+      };
+
+      const response = await fetch(editingId ? `/api/products/${editingId}` : '/api/products', {
+        method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: form.title,
-          artist: form.artist,
-          genre: form.genre,
-          year: Number(form.year || new Date().getFullYear()),
-          price: Number(form.price),
-          oldPrice: Number(form.oldPrice || form.price),
-          stock: Number(form.stock || 1),
-          description: form.description,
-          image: form.image,
-          accent: form.accent,
-          tracks
-        })
+        body: JSON.stringify(requestBody)
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Erro ao cadastrar produto.');
+      if (!response.ok) throw new Error(data.message || 'Erro ao salvar produto.');
 
-      const newProduct = data.product;
-      const nextCatalog = newProduct ? [...items, newProduct] : items;
+      const updatedProduct = data.product;
+      const nextCatalog = editingId
+        ? items.map((item) => (item.id === updatedProduct.id ? updatedProduct : item))
+        : [...items, updatedProduct];
+
       persistCatalog(nextCatalog);
-      setSelectedId(newProduct?.id || items[0]?.id);
-      setMessage(data.message || 'Produto cadastrado com sucesso!');
+      setSelectedId(updatedProduct?.id || items[0]?.id);
+      setMessage(data.message || 'Produto salvo com sucesso!');
       setForm(defaultForm);
+      setEditingId(null);
       setView('store');
       await loadCatalog();
     } catch (error) {
-      setMessage(error.message || 'Erro ao cadastrar produto.');
+      setMessage(error.message || 'Erro ao salvar produto.');
     } finally {
       setSubmitting(false);
     }
@@ -272,6 +380,7 @@ function App() {
           </div>
           <div className="topbar-right">
             <button type="button" className={view === 'store' ? 'view-button active' : 'view-button'} onClick={() => setView('store')}>Loja</button>
+            <button type="button" className={view === 'catalog' ? 'view-button active' : 'view-button'} onClick={() => setView('catalog')}>Produtos</button>
             <button type="button" className={view === 'admin' ? 'view-button active' : 'view-button'} onClick={() => setView('admin')}>Administração</button>
           </div>
         </div>
@@ -288,10 +397,10 @@ function App() {
           {view === 'store' && (
             <>
               <nav className="main-nav" aria-label="menu principal">
-                <a href="#">Início</a>
-                <a href="#">Produtos</a>
-                <a href="#">Contato</a>
-                <a href="#">Política de Privacidade</a>
+                <button type="button" className="nav-link-button" onClick={() => setView('store')}>Início</button>
+                <button type="button" className="nav-link-button" onClick={() => setView('catalog')}>Produtos</button>
+                <button type="button" className="nav-link-button" onClick={() => setView('catalog')}>Contato</button>
+                <button type="button" className="nav-link-button" onClick={() => setView('catalog')}>Política de Privacidade</button>
               </nav>
 
               <div className="tools-box">
@@ -309,7 +418,63 @@ function App() {
         </div>
       </header>
 
-      {view === 'store' ? (
+      {view === 'product' ? (
+        <main className="product-detail-page">
+          <button type="button" className="secondary-button product-back-button" onClick={() => setView('store')}>
+            Voltar à loja
+          </button>
+
+          {selectedAlbum && (
+            <section className="product-detail-card">
+              <div className="product-detail-image-wrap">
+                <img src={selectedAlbum.image} alt={selectedAlbum.title} className="product-detail-image" />
+              </div>
+
+              <div className="product-detail-info">
+                <p className="eyebrow">{selectedAlbum.genre}</p>
+                <h2>{selectedAlbum.title}</h2>
+                <p className="product-detail-artist">{selectedAlbum.artist}</p>
+
+                <div className="product-detail-price-block">
+                  <span className="old-price">R$ {selectedAlbum.oldPrice.toFixed(2)}</span>
+                  <strong>R$ {selectedAlbum.price.toFixed(2)}</strong>
+                  <span className="discount">{Math.round(((selectedAlbum.oldPrice - selectedAlbum.price) / selectedAlbum.oldPrice) * 100)}% OFF</span>
+                </div>
+
+                <p className="product-detail-description">{selectedAlbum.description}</p>
+
+                <div className="product-detail-meta">
+                  <span>Ano: {selectedAlbum.year}</span>
+                  <span>Estoque: {selectedAlbum.stock}</span>
+                </div>
+
+                <div className="product-detail-actions">
+                  <button type="button" className="buy-button" onClick={() => addToCart(selectedAlbum)}>
+                    Adicionar ao carrinho
+                  </button>
+                  <button type="button" className="secondary-button" onClick={() => setView('catalog')}>
+                    Ver mais produtos
+                  </button>
+                </div>
+
+                <div className="product-tracks">
+                  <h3>Faixas</h3>
+                  <ul>
+                    {selectedAlbum.tracks.map((track, index) => (
+                      <li key={`${track.title}-${index}`}>
+                        <button type="button" onClick={() => handleTrackPlay(track)}>
+                          <span>{index + 1}. {track.title}</span>
+                          <small>{track.duration}</small>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </section>
+          )}
+        </main>
+      ) : view === 'store' ? (
         <>
           <main className="page-content">
             <section className="hero-banner hero-only-image">
@@ -332,14 +497,14 @@ function App() {
             <section className="products-section">
               <div className="section-header">
                 <h2>Destaques</h2>
-                <a href="#">Ver todos os produtos</a>
+                <button type="button" className="catalog-link-button" onClick={() => setView('catalog')}>Ver todos os produtos</button>
               </div>
 
               <div className="products-grid">
                 {featuredProducts.map((product) => (
                   <article key={product.id} className="product-card">
                     <span className="offer-tag">Oferta</span>
-                    <button type="button" className="image-link" onClick={() => setSelectedId(product.id)}>
+                    <button type="button" className="image-link" onClick={() => openProductDetail(product)}>
                       <img src={product.image} alt={product.title} />
                     </button>
                     <div className="product-info">
@@ -449,13 +614,46 @@ function App() {
             </div>
           </aside>
         </>
+      ) : view === 'catalog' ? (
+        <main className="catalog-page">
+          <section className="catalog-header">
+            <div>
+              <p className="eyebrow">Catálogo completo</p>
+              <h2>Todos os produtos</h2>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => setView('store')}>Voltar para loja</button>
+          </section>
+
+          <section className="catalog-grid">
+            {filteredItems.map((product) => (
+              <article key={product.id} className="catalog-card product-card">
+                <button type="button" className="image-link" onClick={() => openProductDetail(product)}>
+                  <img src={product.image} alt={product.title} />
+                </button>
+                <div className="product-info">
+                  <h3>{product.title}</h3>
+                  <p className="catalog-artist">{product.artist}</p>
+                  <div className="price-block">
+                    <span className="old-price">R$ {product.oldPrice.toFixed(2)}</span>
+                    <span className="discount">{Math.round(((product.oldPrice - product.price) / product.oldPrice) * 100)}% OFF</span>
+                    <strong>R$ {product.price.toFixed(2)}</strong>
+                    <small>3 x de R$ {(product.price / 3).toFixed(2)} sem juros</small>
+                  </div>
+                  <button type="button" className="add-product" onClick={() => addToCart(product)}>
+                    Adicionar ao carrinho
+                  </button>
+                </div>
+              </article>
+            ))}
+          </section>
+        </main>
       ) : (
         <main className="admin-page">
           <section className="admin-card">
             <div className="admin-header">
               <div>
                 <p className="eyebrow">Painel administrativo</p>
-                <h2>Cadastrar novo produto</h2>
+                <h2>{editingId ? 'Editar produto' : 'Cadastrar novo produto'}</h2>
               </div>
               <span className="admin-badge">{items.length} itens</span>
             </div>
@@ -529,8 +727,21 @@ function App() {
               </div>
 
               <div className="admin-actions">
+                {editingId && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setEditingId(null);
+                      setForm(defaultForm);
+                      setMessage('Edição cancelada.');
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                )}
                 <button type="submit" className="submit-button" disabled={submitting}>
-                  {submitting ? 'Salvando...' : 'Salvar produto'}
+                  {submitting ? 'Salvando...' : editingId ? 'Atualizar produto' : 'Salvar produto'}
                 </button>
               </div>
 
@@ -546,10 +757,17 @@ function App() {
                   <div className="admin-product-image">
                     <img src={item.image} alt={item.title} />
                   </div>
-                  <div>
+                  <div className="admin-product-meta">
                     <strong>{item.title}</strong>
                     <span>{item.artist}</span>
                     <small>R$ {item.price.toFixed(2)}</small>
+                  </div>
+                  <div className="admin-product-actions">
+                    <button type="button" className="mini-button" onClick={() => handleTogglePublish(item)}>
+                      {item.published === false ? 'Publicar' : 'Ocultar'}
+                    </button>
+                    <button type="button" className="mini-button" onClick={() => handleEditProduct(item)}>Editar</button>
+                    <button type="button" className="mini-button danger" onClick={() => handleDeleteProduct(item.id)}>Excluir</button>
                   </div>
                 </li>
               ))}
